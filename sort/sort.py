@@ -71,7 +71,6 @@ def convert_x_to_bbox(x,score=None):
   else:
     return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((1,5))
 
-
 class KalmanBoxTracker(object):
   """
   This class represents the internel state of individual tracked objects observed as bbox.
@@ -139,7 +138,7 @@ def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
   """
   if(len(trackers)==0):
     return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
-  iou_matrix = np.zeros((len(detections),len(trackers)),dtype=np.float32)
+  iou_matrix = np.zeros((len(detections),len(trackers)),dtype=np.float32) # len(detections)行，len(trackers)列的矩阵
 
   for d,det in enumerate(detections):
     for t,trk in enumerate(trackers):
@@ -238,48 +237,79 @@ def parse_args():
 
 if __name__ == '__main__':
   # all train
-  sequences = ['PETS09-S2L1','TUD-Campus','TUD-Stadtmitte','ETH-Bahnhof','ETH-Sunnyday','ETH-Pedcross2','KITTI-13','KITTI-17','ADL-Rundle-6','ADL-Rundle-8','Venice-2']
-  args = parse_args()
-  display = args.display
+  display = True #args.display
   phase = 'train'
   total_time = 0.0
+
   total_frames = 0
   colours = np.random.rand(32,3) #used only for display
+  
+  data_dir = os.path.abspath('.\data')
   if(display):
-    if not os.path.exists('mot_benchmark'):
-      print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
-      exit()
     plt.ion()
     fig = plt.figure() 
   
   if not os.path.exists('output'):
     os.makedirs('output')
   
-  for seq in sequences:
-    mot_tracker = Sort() #create instance of the SORT tracker
-    seq_dets = np.loadtxt('data/%s/det.txt'%(seq),delimiter=',') #load detections
-    with open('output/%s.txt'%(seq),'w') as out_file:
-      print("Processing %s."%(seq))
-      for frame in range(int(seq_dets[:,0].max())):
-        frame += 1 #detection and frame numbers begin at 1
-        dets = seq_dets[seq_dets[:,0]==frame,2:7]
-        dets[:,2:4] += dets[:,0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
-        total_frames += 1
 
+ # for seq in sequences:
+  mot_tracker = Sort() #create instance of the SORT tracker
+  # 生成字典，{imagename1: 4, imagename2: 5,...}
+  name_num_dict = {}
+  with open(os.path.join(data_dir, '1105-50-32.txt'), 'r') as f:
+    #imagename_list = [info.rstrip().split(' ')[0] for info in f]
+    for info in f:
+      infolist = info.rstrip().split(' ')
+      imagename = infolist[0]
+      name_num_dict[imagename] = []
+  with open(os.path.join(data_dir, '1105-50-32.txt'), 'r') as f: #调用两次 for a in f，出错
+    for info in f:
+      infolist = info.rstrip().split(' ')
+      imagename = infolist[0]
+      name_num_dict[imagename].append(infolist[1:])
+
+
+  #seq_dets = np.loadtxt(os.path.join(data_dir, '1105-50-32.txt'), delimiter=' ', usecols = (1,2,3,4,5)) #load detections
+  is_detected = 0
+  with open('tracker.txt','w') as out_file:
+      print("Processing detected data.")
+      trackers = None
+      for imagename, bboxes in name_num_dict.items():
+        dets = np.asarray(bboxes, dtype= float)
+        
+        # if is_detected % 4000 == 0:
+        #   dets = np.asarray(bboxes, dtype= float)
+        #   is_detected = False
+        # else:
+        #   dets = trackers.copy()
+        # is_detected += 1
         if(display):
           ax1 = fig.add_subplot(111, aspect='equal')
-          fn = 'mot_benchmark/%s/%s/img1/%06d.jpg'%(phase,seq,frame)
+          fn = 'F:\\Dark\\Dev\\Tracking\\sort\\data\\frame_data\\%s' %imagename
           im =io.imread(fn)
           ax1.imshow(im)
-          plt.title(seq+' Tracked Targets')
+          plt.title(imagename +' Tracked Targets')
 
+          for bbox in bboxes:
+            d1 = np.asarray(bbox[:], dtype = float)
+            d1 = d1.astype(np.int32)
+            ax1.add_patch(patches.Rectangle((d1[0],d1[1]),d1[2]-d1[0],d1[3]-d1[1],fill=True,lw=1,ec=colours[d1[4]%32,:]))
+            ax1.set_adjustable('box-forced')
+        print('dets is')
+        print(dets)
+        print('trackers is')
+        print(trackers)
+        print('bbox is')
+        print(bboxes)
         start_time = time.time()
-        trackers = mot_tracker.update(dets)
+        trackers = mot_tracker.update(dets) #获取检测框，得到预测值
         cycle_time = time.time() - start_time
         total_time += cycle_time
+        
+        #is_detected += 1
 
         for d in trackers:
-          print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
           if(display):
             d = d.astype(np.int32)
             ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
@@ -290,7 +320,7 @@ if __name__ == '__main__':
           plt.draw()
           ax1.cla()
 
-  print("Total Tracking took: %.3f for %d frames or %.1f FPS"%(total_time,total_frames,total_frames/total_time))
+  #print("Total Tracking took: %.3f for %d frames or %.1f FPS"%(total_time,total_frames,total_frames/total_time))
   if(display):
     print("Note: to get real runtime results run without the option: --display")
   
